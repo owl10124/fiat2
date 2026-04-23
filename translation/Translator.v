@@ -158,19 +158,23 @@ Fixpoint expr_fiat_to_pyro (fe: expr) (G: list (string * type)): result term :=
   | EBinop op fe1 fe2 => 
       e1 <- expr_fiat_to_pyro fe1 G ;; 
       e2 <- expr_fiat_to_pyro fe2 G ;;
+      ty <- get_fiat_type fe1 G ;;
+      let A := ty_fiat_to_pyro ty G in
                              match op with
                              | OAnd => Success (con "andb" [e2;e1;Gp])
                              | OOr => Success (con "orb" [e2;e1;Gp])
-                             | OCons => Success (con "cons" [e2;e1;Gp])
+                             | OCons => Success (con "cons" [e2;e1;A;Gp])
                              | _ => error:("binop" op "not defined yet")
                              end
   | EIf fcond fe1 fe2 => 
       cond <- expr_fiat_to_pyro fcond G ;;
       e1 <- expr_fiat_to_pyro fe1 G ;;
       e2 <- expr_fiat_to_pyro fe2 G ;;
-      Success (con "if" [e2;e1;cond;Gp])
+      ty <- get_fiat_type fe1 G ;;
+      let A := ty_fiat_to_pyro ty G in
+      Success (con "if" [e2;e1;A;cond;Gp])
   | ELet fe1 name fe2 => 
-      ty_e1 <- get_fiat_type fe1 G ;; (*TODO*)
+      ty_e1 <- get_fiat_type fe1 G ;;
       e1 <- expr_fiat_to_pyro fe1 G ;; 
       e2 <- expr_fiat_to_pyro fe2 ((name,ty_e1)::G) ;; 
       let A := ty_fiat_to_pyro ty_e1 G in
@@ -180,21 +184,30 @@ Fixpoint expr_fiat_to_pyro (fe: expr) (G: list (string * type)): result term :=
         (con "snoc" [e1; A; (con "id" [Gp]); Gp; Gp]);
         (con "ext" [A;Gp]);
         Gp
-        ]) (* TODO confident up to here... *)
-  | ERecord gl => l <- (fold_right 
-      (fun x a => x' <- expr_fiat_to_pyro (snd x) G ;; a' <- a ;;
-                  Success (con "cons_record" [a';x';Gp])) 
-              (Success {{e#"empty_record"}}) gl) ;;
-                Success (con "Trecord" [l;Gp])
+      ]) 
+  | ERecord gl => 
+      '(rec,_) <- (fix build_rec (gl: list(string * expr)) (Gp: term) :=
+        match gl with
+        | nil => Success (con "empty_record" [Gp], con "empty_list_ty" [])
+        | (name, expr) :: gl' => 
+            v <- expr_fiat_to_pyro expr G ;;
+            ty <- get_fiat_type expr G ;;
+            let A := ty_fiat_to_pyro ty G in
+            '(l, lty) <- build_rec gl' Gp ;;
+            Success (con "cons_record" [l;v;lty;A;Gp], con "cons_list_ty" [lty;A])
+        end
+      ) gl Gp ;; Success rec (* TODO elab works up to here... *)
   | EAccess fe name =>
       rec <- expr_fiat_to_pyro fe G ;;
       Success (con "car" [Gp;rec]) (*TODO*)
   | EFilter tag ftb name fp =>
       (* note name is the bound variable for the record in fp *)
-      let ty_rec := TRecord [] in (*TODO*)
+      ty_tb <- get_fiat_type ftb G ;;
+      match ty_tb with TList ty_rec =>
       tb <- expr_fiat_to_pyro ftb G ;; 
       p <- expr_fiat_to_pyro fp ((name, ty_rec) :: G) ;;
       Success (con "filter" [Gp;(con "val_subst" [p]);tb])
+      | _ => error:("table" ftb "of type" ty_tb "not a list of records") end
   | EJoin tag fl1 fl2 name1 name2 fp fr =>
       (* TODO strings *)
       tb1 <- expr_fiat_to_pyro fl1 G ;;
@@ -283,7 +296,8 @@ Compute expr_fiat_to_pyro (EAtom (ABool true)) nil.
 (* Success {{e#"true"}} *)
 Compute expr_fiat_to_pyro (EUnop ONot (EAtom (ABool true))) nil.
 (* Success {{e#"notb" #"true"}} *)
-Compute expr_fiat_to_pyro (
+Compute 
+tr <- expr_fiat_to_pyro (
 (EBinop OCons 
     (ERecord [("a", EAtom (ABool true)); ("b", EAtom (ABool false))])
     (EBinop OCons
@@ -291,9 +305,10 @@ Compute expr_fiat_to_pyro (
       (EAtom (ANil (Some (TRecord [("a", TBool); ("b", TBool)]))))
     )
   )
-) nil.
+) nil ;;
+  Success (hide_term_implicits (fiat++value_subst++exp_subst) tr).
 
-Compute expr_fiat_to_pyro (EFilter 
+Compute tr <- expr_fiat_to_pyro (EFilter 
   LikeList 
   (EBinop OCons 
     (ERecord [("a", EAtom (ABool true)); ("b", EAtom (ABool false))])
@@ -304,7 +319,8 @@ Compute expr_fiat_to_pyro (EFilter
   )
   "r"
   (EAccess (EVar "r") "a")  
-) nil.
+) nil ;;
+  Success (hide_term_implicits (fiat++value_subst++exp_subst) tr).
 
 (*
 Fixpoint expr_pyro_to_fiat (t: term): result expr := 
@@ -346,8 +362,7 @@ Fixpoint env_pyro_to_fiat (t: term): result (list (string * type)) :=
   | _ => error:("term" t "not an env") 
   end.
 
-
-Fixpoint expr_pyro_to_fiat (t: term): result expr := 
+Fixpoint expr_pyro_to_fiat (t: term): result expr := (* * list (string * type)) := *)
   match t with
   | con s l => match s, l with
                | "true", [Gp] => Success (EAtom (ABool true))
@@ -363,11 +378,11 @@ Fixpoint expr_pyro_to_fiat (t: term): result expr :=
                    fe1 <- expr_pyro_to_fiat e1 ;; 
                    fe2 <- expr_pyro_to_fiat e2 ;; 
                    Success (EBinop OOr fe1 fe2)
-               | "cons", [e2;e1;Gp] => 
+               | "cons", [e2;e1;A;Gp] => 
                    fe1 <- expr_pyro_to_fiat e1 ;; 
                    fe2 <- expr_pyro_to_fiat e2 ;; 
                    Success (EBinop OCons fe1 fe2)
-               | "if", [e2;e1;cond;Gp] => 
+               | "if", [e2;e1;A;cond;Gp] => 
                    fcond <- expr_pyro_to_fiat cond ;; 
                    fe1 <- expr_pyro_to_fiat e1 ;; 
                    fe2 <- expr_pyro_to_fiat e2 ;; 
@@ -377,8 +392,8 @@ Fixpoint expr_pyro_to_fiat (t: term): result expr :=
   | _ => error:("term" t "not an expr")
   end.
 
-Definition tx := EIf (EAtom (ABool true)) (EAtom (ABool true)) (EAtom (ABool false)).
-(*Definition tx := EOr (EAtom (ABool true)) (EAtom (ABool false)).*)
+(*Definition tx := EIf (EAtom (ABool true)) (EAtom (ABool true)) (EAtom (ABool false)).*)
+Definition tx := EBinop OOr (EAtom (ABool false)) (EAtom (ABool false)).
 Definition pytx := match (expr_fiat_to_pyro tx []) with Success p => p | Failure _ => var "" end.
 
 Compute tx.
@@ -386,4 +401,4 @@ Compute pytx.
 Compute expr_pyro_to_fiat pytx.
 Goal (Success tx) = (expr_pyro_to_fiat pytx). Proof. auto. Qed.
 
-
+Compute (PositiveInstantiation.egraph_simpl' (fiat++value_subst++exp_subst) 20 20 60 [] pytx).
