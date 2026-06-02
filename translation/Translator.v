@@ -19,12 +19,16 @@ Open Scope list.
 
 Require Import Stdlib.FSets.FMapInterface.
 Require Import Stdlib.ZArith.ZArith.
+Require Import Tactics.
 
-Require coqutil.Map.SortedListString.
-Local Existing Instance SortedListString.map.
-Local Existing Instance SortedListString.ok.
-Local Existing Instance SortedListString.Build_parameters.
+Section WithMap.
+  Context {locals: forall T, map.map string T} {locals_ok: forall T, map.ok (locals T)}.
+  Definition tenv := locals type.
 
+  Definition fiat_rules := fiat ++ value_subst ++ exp_subst.
+
+Definition pyro_expr_wf (pexpr: term) (pty: term) (penv: term) :=
+  wf_term fiat_rules [] pexpr (scon "val" [pty;penv]).
 
 Print expr.
 Locate term.
@@ -37,34 +41,23 @@ Fixpoint lookup_ind {T} (name: string) (rec: list (string * T)) :=
   match rec with
   | (name', _) :: rec' => if (name' =? name) then (Success 0) else 
 n <- lookup_ind name rec' ;; Success (S n)
-| nil => error:("var" name "not found in env")
+  | nil => error:("var" name "not found in env")
   end.
-
-(*
-Definition record_sort {T} := Mergesort.Sectioned.sort (
-  fun (a b:(string*T)) => (Value.record_entry_leb a b)
-).
- *)
 
 Definition x := {{e #"ext" (#"ext" #"emp" #"bool") #"bool"}}.
 Print x.
 
-Definition fiat_rules := fiat ++ value_subst ++ exp_subst.
-
-
-Fixpoint fiat_env_to_map (G: list (string * type)) :=
+Fixpoint fiat_env_to_map (G: list (string * type)): result tenv :=
 match G with
-  | nil => Success map.empty
-  | (n,t)::G' => 
-Gm<- fiat_env_to_map G' ;; 
+  | nil => Success (map.empty)
+  | (n,t)::G' => Gm <- fiat_env_to_map G' ;; 
       match map.get Gm n with None => Success (map.put Gm n t) | Some _ => error:("key" n "already in" G) end
   end.
 
-(*
-  fold_right 
-    (fun x a => map.put a (fst x) (snd x))
-    map.empty G.
- *)
+Opaque locals.
+Hint Rewrite (map.get_put_diff (map:=tenv)): core.
+Hint Rewrite (map.get_put_same (map:=tenv)): core.
+Hint Rewrite (map.get_empty (map:=tenv)): core.
 
 Compute fenv <- fiat_env_to_map [("a",TBool)] ;; synthesize_expr fenv _ (EAtom (ABool true)).
 
@@ -123,6 +116,8 @@ Definition ty_list_fiat_to_pyro (l: list (string * type)): result term :=
       map (fun x => ty <- ty_fiat_to_pyro (snd x) ;; Success (fst x, ty)) l) ;;
       make_list_ty (map snd (record_sort l)).
 
+Hint Unfold ty_fiat_to_pyro ty_list_fiat_to_pyro: core.
+
 Fixpoint env_fiat_to_pyro (G: list (string * type)): result term :=
   match G with
   | [] => Success {{e#"emp"}}
@@ -131,11 +126,6 @@ Fixpoint env_fiat_to_pyro (G: list (string * type)): result term :=
       Gp <- env_fiat_to_pyro G' ;;
       Success (con "ext" [A;Gp])
   end.
-  (*
-  fold_right 
-      (fun x Gp => (con "ext" [(ty_fiat_to_pyro (snd x) G); Gp])) 
-      {{e#"emp"}} G.
-   *)
 
 Compute env_fiat_to_pyro [("a", TBool); ("b", TRecord([("a",TBool)]))].
 
@@ -155,8 +145,7 @@ Fixpoint expr_fiat_to_pyro (fe: expr) (Genv: list (string * type)) (Gstore: list
                              | false => Success (con "false" [Gp])
                              end
                 | ANil sft => match sft with 
-                              | Some ft => 
-A <- ty_fiat_to_pyro ft ;;
+                              | Some ft => A <- ty_fiat_to_pyro ft ;;
                                   Success (con "lempty" [A; Gp])
                               | None => error:("anil defined without type")
                               end
@@ -237,30 +226,54 @@ A <- ty_fiat_to_pyro ft ;;
                                          end) n tl rec)
       | _ => error:("eaccess argument " fe "of incorrect type" ty)
       end
-      (*
   | EFilter tag ftb name fp =>
       (* note name is the bound variable for the record in fp *)
+      match (lookup_ind name Genv) with Success n => error:("variable" name "bound in" Genv)
+      | _ =>
       ty_tb <- get_fiat_type ftb Genv Gstore ;;
       match ty_tb with TList ty_rec =>
+      t <- ty_fiat_to_pyro ty_rec ;;
       tb <- expr_fiat_to_pyro ftb Genv Gstore ;; 
       p <- expr_fiat_to_pyro fp ((name, ty_rec) :: Genv) Gstore ;;
-      Success (con "filter" [Gp;(con "val_subst" [p]);tb])
+      Success (con "filter" [p;tb;t;Gp])
       | _ => error:("table" ftb "of type" ty_tb "not a list of records") end
-  | EJoin tag fl1 fl2 name1 name2 fp fr =>
-      (* TODO strings *)
-      tb1 <- expr_fiat_to_pyro fl1 Genv Gstore ;;
-      tb2 <- expr_fiat_to_pyro fl2 Genv Gstore ;;
-      p <- expr_fiat_to_pyro fp Genv Gstore ;;
-      r <- expr_fiat_to_pyro fr Genv Gstore ;;
-        Success (con "join" [r;p;tb2;tb1;Gp])
+      end
+  | EJoin tag ftb1 ftb2 name1 name2 fp fr =>
+      ftl1 <- get_fiat_type ftb1 Genv Gstore ;;
+      ftl2 <- get_fiat_type ftb2 Genv Gstore ;;
+      match ftl1 with TList ft1 =>
+      match ftl2 with TList ft2 =>
+      match (lookup_ind name1 Genv) with Success n => error:("variable" name1 "bound in" Genv) 
+      | _=>
+      match (lookup_ind name2 ((name1,ft1)::Genv)) with Success n => error:("variable" name2 "bound in" Genv)
+      | _ =>
+      ft3 <- get_fiat_type fr ((name2,ft2)::(name1,ft1)::Genv) Gstore ;;
+      t1 <- ty_fiat_to_pyro ft1 ;;
+      t2 <- ty_fiat_to_pyro ft2 ;;
+      t3 <- ty_fiat_to_pyro ft3 ;;
+      tb1 <- expr_fiat_to_pyro ftb1 Genv Gstore ;;
+      tb2 <- expr_fiat_to_pyro ftb2 Genv Gstore ;;
+      p <- expr_fiat_to_pyro fp ((name2,ft2)::(name1,ft1)::Genv) Gstore ;;
+      r <- expr_fiat_to_pyro fr ((name2,ft2)::(name1,ft1)::Genv) Gstore ;;
+        Success (con "join" [r;p;tb2;tb1;t3;t2;t1;Gp])
+      end end
+      | _ => error:("table" ftb2 "of type" ftl2 "not a list of records") end
+      | _ => error:("table" ftb1 "of type" ftl1 "not a list of records") end
   | EProj tag fl name fr =>
-      (* TODO strings *)
       tb <- expr_fiat_to_pyro fl Genv Gstore ;; 
-      r <- expr_fiat_to_pyro fr Genv Gstore ;;
-      Success (con "proj" [r;tb;Gp])
-       *)
+      ty_tb <- get_fiat_type fl Genv Gstore ;;
+      match ty_tb with TList ty_rec =>
+      t1 <- ty_fiat_to_pyro ty_rec ;;
+      match (lookup_ind name Genv) with Success n => error:("variable" name "bound in" Genv) 
+      | _ =>
+      ft2 <- get_fiat_type fr ((name,ty_rec)::Genv) Gstore ;;
+      t2 <- ty_fiat_to_pyro ft2 ;;
+      r <- expr_fiat_to_pyro fr ((name,ty_rec)::Genv) Gstore ;;
+      Success (con "proj" [r;tb;t2;t1;Gp]) end
+      | _ => error:("table" fl "of type" ty_tb "not a list of records") end
   | _ => error:("term" fe "not defined")
   end.
+Hint Unfold expr_fiat_to_pyro: core.
 
 Definition trx := expr_fiat_to_pyro (EAtom (ABool false)) [] [].
 
@@ -270,14 +283,6 @@ Compute trx.
 
 (* synthesize type in typesystem.v? *)
 Compute lang.
-
-Ltac t'' := repeat (
-  match goal with
-  | [|-Model.wf_term _ _ _] => t'
-  | [|-wf_term _ _ _ _] => eapply wf_term_by'
-  | [|-wf_args _ _ _] => econstructor
-  | [|-_] => unshelve (repeat t); simpl
-  end).
 
 Derive te
   SuchThat (elab_term (value_subst) [] {{e#"emp"}} te {{s#"env"}} )
@@ -314,13 +319,16 @@ Definition trx' := match (
   ) [] [])
   with Success x => x | _ => {{e#""}} end.
 
+(*
+Compute trx'.
 Goal wf_term (fiat_rules) [] trx' {{s#"val" #"emp" #"bool"}}.
-Proof.  t''.  Qed.
+Proof. t''. Qed.
 
 Compute hide_term_implicits (fiat_rules) trx'.
 
 Compute hide_term_implicits (fiat_rules)
   (PositiveInstantiation.egraph_simpl' (fiat_rules) 20 20 60 [] trx').
+ *)
 
 (* do post-elab terms... i.e. outputs of trx_derived *)
 
@@ -358,10 +366,28 @@ tr <- expr_fiat_to_pyro (
 ) [] [] ;;
   Success (hide_term_implicits (fiat_rules) tr).
 
-Fixpoint ty_pyro_to_fiat (t: term): result type :=
+Fixpoint list_ty_pyro_to_fiat (t: term): result (list (string*type)) :=
+  match t with
+  | con s l => match s, l with
+               | "empty_list_ty", [l;A] => Success []
+               | "cons_list_ty", [l;A] => 
+                   ft <- ty_pyro_to_fiat A ;;
+                   l' <- list_ty_pyro_to_fiat l ;;
+                   Success ((of_nat (length l'), ft) :: l')
+               | _, _ => error:("term" t "not a type")
+               end
+  | _ => error:("term" t "not a type")
+  end
+with ty_pyro_to_fiat (t: term): result type :=
   match t with
   | con s l => match s, l with
                | "bool", [] => Success TBool
+               | "Trecord", [lty] => 
+                   lty <- (list_ty_pyro_to_fiat lty) ;;
+                   Success (TRecord lty)
+               | "list", [ty] => 
+                   ft <- ty_pyro_to_fiat ty ;;
+                   Success (TList ft)
                | _, _ => error:("term" t "not a type")
                end
   | _ => error:("term" t "not a type")
@@ -405,6 +431,9 @@ Fixpoint expr_pyro_to_fiat (t: term): result expr := (* * list (string * type)) 
                    fe1 <- expr_pyro_to_fiat e1 ;; 
                    fe2 <- expr_pyro_to_fiat e2 ;; 
                    Success (EIf fcond fe1 fe2)
+               | "lempty", [A;Gp] =>
+                   ft <- ty_pyro_to_fiat A ;;
+                   Success (EAtom (ANil (Some ft)))
                | _, _ => error:("term" t "not an expr")
                end
   | _ => error:("term" t "not an expr")
@@ -418,3 +447,4 @@ Compute tx.
 Compute pytx.
 Compute expr_pyro_to_fiat pytx.
 Goal (Success tx) = (expr_pyro_to_fiat pytx). Proof. auto. Qed.
+End WithMap.
