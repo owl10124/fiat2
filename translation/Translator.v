@@ -25,7 +25,7 @@ Section WithMap.
   Context {locals: forall T, map.map string T} {locals_ok: forall T, map.ok (locals T)}.
   Definition tenv := locals type.
 
-  Definition fiat_rules := fiat ++ value_subst ++ exp_subst.
+  Definition fiat_rules := fiat ++ exp_subst ++ value_subst.
 
 Definition pyro_expr_wf (pexpr: term) (pty: term) (penv: term) :=
   wf_term fiat_rules [] pexpr (scon "val" [pty;penv]).
@@ -366,45 +366,115 @@ tr <- expr_fiat_to_pyro (
 ) [] [] ;;
   Success (hide_term_implicits (fiat_rules) tr).
 
-Fixpoint list_ty_pyro_to_fiat (t: term): result (list (string*type)) :=
+Fixpoint name_nat (x: nat): string :=
+  match x with 0 => "" | S n => " " ++ name_nat n end.
+
+Definition name_list_ty {T} (l: list T): list (string * T) :=
+  (fix f (l: list T) (n: nat) := match l with
+                                 | [] => []
+                                 | x::l => ((name_nat n), x) :: (f l (S n))
+                                 end) l 0.
+
+Require Import Psatz.
+
+Lemma name_nat_leb: forall m n,
+  (n <= m -> is_true ((name_nat n) <=? (name_nat m))).
+Proof.
+  induction m; destruct n; intros; try lia; inj_all.
+  assert (n<=m) by lia;
+  specialize IHm with n; inj_all.
+Qed.
+Lemma name_nat_inj: forall n m,
+  name_nat n = name_nat m -> n = m.
+Proof.
+  induction n; destruct m; intros; try lia; inj_all.
+  inversion H; inj_all.
+Qed.
+Hint Resolve name_nat_inj name_nat_leb: core.
+Opaque name_nat.
+
+Lemma name_list_ty_ok: forall {A} l,
+  let fl := name_list_ty l in
+  StronglySorted (fun p p' : string * A => is_true (record_entry_leb p p')) fl /\
+  NoDup (map fst fl) /\
+  l = map snd fl.
+Proof.
+  intro A.
+  set (f := (fix f (l: list A) (n: nat) := match l with
+                                 | [] => []
+                                 | x::l => ((name_nat n), x) :: (f l (S n))
+                                 end)). 
+  enough (forall l n,
+  StronglySorted (fun p p' : string * A => is_true (record_entry_leb p p')) (f l n) /\
+  NoDup (map fst (f l n)) /\
+  (forall m a, n<m -> 
+    Forall (fun p' : string * A => is_true (record_entry_leb (name_nat n, a) p')) (f l m) /\
+  ~In (name_nat n) (map fst (f l m))) /\
+  l = map snd (f l n)) by (unfold name_list_ty in *; intros; specialize H with l 0; inj_all).
+
+  induction l; intros; intuition; invert_cons; equality; try constructor; 
+  inj_all.
+  all: try solve [specialize IHl with (S n); inj_all].
+  all: specialize IHl with n; inj_all.
+  all: try solve [specialize H1 with (S n) a; assert (n < S n) by lia; inj_all].
+  - apply name_nat_leb; lia.
+  - eapply H2; lia.
+  - destruct H0. 
+    + apply name_nat_inj in H0; lia.
+    + eapply H3; try apply H0; eauto.
+Qed.
+
+Opaque name_list_ty.
+
+Fixpoint list_ty_pyro_to_fiat (t: term): result (list type) :=
   match t with
-  | con s l => match s, l with
-               | "empty_list_ty", [l;A] => Success []
-               | "cons_list_ty", [l;A] => 
+  | {{e #"empty_list_ty" {A} {l} }} => Success []
+  | {{e #"cons_list_ty" {A} {l} }} => 
                    ft <- ty_pyro_to_fiat A ;;
                    l' <- list_ty_pyro_to_fiat l ;;
-                   Success ((of_nat (length l'), ft) :: l')
-               | _, _ => error:("term" t "not a type")
-               end
+                   Success (ft :: l') (* TODO this one does bad things? *)
   | _ => error:("term" t "not a type")
   end
 with ty_pyro_to_fiat (t: term): result type :=
   match t with
-  | con s l => match s, l with
-               | "bool", [] => Success TBool
-               | "Trecord", [lty] => 
-                   lty <- (list_ty_pyro_to_fiat lty) ;;
-                   Success (TRecord lty)
-               | "list", [ty] => 
+               | {{e #"bool"}} => Success TBool
+               | {{e #"Trecord" {lty} }} =>
+                   lty <- list_ty_pyro_to_fiat lty ;;
+                   Success (TRecord (name_list_ty lty))
+               | {{e #"list" {ty} }} => 
                    ft <- ty_pyro_to_fiat ty ;;
                    Success (TList ft)
-               | _, _ => error:("term" t "not a type")
-               end
   | _ => error:("term" t "not a type")
   end.
 
-Fixpoint env_pyro_to_fiat (t: term): result (list (string * type)) :=
+Definition lenv := (list (string * type)).
+
+Fixpoint env_pyro_to_fiat (t: term): result lenv :=
   match t with
   | con s l => match s, l with
                | "emp", [] => Success ([])
                | "ext", [A;Gp] => 
                    fe <- ty_pyro_to_fiat A ;;
                    G <- env_pyro_to_fiat Gp ;;
-                   Success ((of_nat (length G), fe) :: G) (* TODO *)
+                   Success ((of_nat (length G), fe) :: G) 
                | _, _ => error:("term" t "not an env")
                end
   | _ => error:("term" t "not an env") 
   end.
+
+Definition sub := (prod lenv lenv).
+
+Fixpoint sub_pyro_to_fiat (t: term): result sub :=
+  match t with
+  | con s l => match s, l with
+               | "wkn", [A;Gp] =>
+                   ft <- ty_pyro_to_fiat A ;;
+                   Gp <- env_pyro_to_fiat Gp ;;
+                   Success (Gp, ((of_nat (length Gp), ft) :: Gp)) 
+               | _, _ => error:("term" t "not a sub") 
+               end
+  | _ => error:("term" t "not a sub") 
+  end. (* TODO *)
 
 Fixpoint expr_pyro_to_fiat (t: term): result expr := (* * list (string * type)) := *)
   match t with

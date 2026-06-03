@@ -8,19 +8,25 @@ run `make -j16` to build. `pyrosome` and `fiat2` build fine let's keep it that w
 
 - `Translator.v` (contains actual translation functions)
   - [x] fiat to pyro is good and has some interesting stuff
-  - [ ] pyro to fiat is more rudimentary atm
-    - [ ] need variable naming (the sorting order is wrong. annoying)
+  - [x] pyro to fiat is more rudimentary atm
+    - [x] need variable naming (the sorting order is wrong. annoying)
+    - [ ] might need to define substitutions etc? annoying
 - `FiatToPyroSound.v` (proofs)
   - [x] type safety proof (works well! for now)
     - [x] tactics run in reasonable time 
 - `PyroToFiatSound.v` (proofs)
-  - [ ] type safety proof
-    - [ ] **blocker: value sort equivalence: figure out subst / contexts**
-    - [ ] sorting admits (see translator.v)
-  - [ ] some cleanup? (things are named stupidly and unreferenceable)
+  - [x] type safety proof
+    - [x] sorting admits (see translator.v)
+    - [x] blocker: value sort equivalence: figure out subst / contexts
+      - sort equivalences in `FiatRulesEq.v`
+  - [x] some cleanup? (things are named stupidly and unreferenceable)
   - i could probably write a tactic for rule checks (currently it's `repeat [destruct H; equality]`)
+- language rules in [FiatTest.v](../deps/pyrosome/src/Pyrosome/Lang/FiatTest.v) (i don't change this much)
+  - `neq` in `FiatTest.v` is kinda screwed, had to comment that out
+- subst rules in [VSubst.v](../deps/pyrosome/src/Pyrosome/Lang/VSubst.v) 
 
 ## things to note before i forget
+
 
 ### how to induct on pyrosome terms
 
@@ -43,7 +49,7 @@ judgement induction should...
    list_ty and ty: manually write a lemma for cases
 ```
 
-dealing with `wf_args`: repeated destruct is fine
+dealing with `wf_args`: repeated destruct is fine whatever
 
 ### tactics
 
