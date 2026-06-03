@@ -24,119 +24,117 @@ Require Import Tactics.
 Section WithMap.
   Context {locals: forall T, map.map string T} {locals_ok: forall T, map.ok (locals T)}.
   Definition tenv := locals type.
+  Definition lenv := (list (string * type)).
 
   Definition fiat_rules := fiat ++ exp_subst ++ value_subst.
 
-Definition pyro_expr_wf (pexpr: term) (pty: term) (penv: term) :=
-  wf_term fiat_rules [] pexpr (scon "val" [pty;penv]).
+  Definition pyro_expr_wf (pexpr: term) (pty: term) (penv: term) :=
+    wf_term fiat_rules [] pexpr (scon "val" [pty;penv]).
 
-Print expr.
-Locate term.
-About Term.term.
-Compute {{e#"true"}}.
-Compute {{e#"notb" #"true"}}.
-Compute (con "andb" [{{e#"true"}};{{e#"true"}}]).
+  Compute {{e#"true"}}.
+  Compute {{e#"notb" #"true"}}.
+  Compute (con "andb" [{{e#"true"}};{{e#"true"}}]).
 
-Fixpoint lookup_ind {T} (name: string) (rec: list (string * T)) :=
-  match rec with
-  | (name', _) :: rec' => if (name' =? name) then (Success 0) else 
-n <- lookup_ind name rec' ;; Success (S n)
-  | nil => error:("var" name "not found in env")
-  end.
+  Fixpoint lookup_ind {T} (name: string) (rec: list (string * T)) :=
+    match rec with
+    | (name', _) :: rec' => if (name' =? name) then (Success 0) else 
+        n <- lookup_ind name rec' ;; Success (S n)
+    | nil => error:("var" name "not found in env")
+    end.
 
-Definition x := {{e #"ext" (#"ext" #"emp" #"bool") #"bool"}}.
-Print x.
+  Definition x := {{e #"ext" (#"ext" #"emp" #"bool") #"bool"}}.
+  Print x.
 
-Fixpoint fiat_env_to_map (G: list (string * type)): result tenv :=
-match G with
-  | nil => Success (map.empty)
-  | (n,t)::G' => Gm <- fiat_env_to_map G' ;; 
-      match map.get Gm n with None => Success (map.put Gm n t) | Some _ => error:("key" n "already in" G) end
-  end.
+  Fixpoint fiat_env_to_map (G: lenv): result tenv :=
+    match G with
+    | nil => Success (map.empty)
+    | (n,t)::G' => Gm <- fiat_env_to_map G' ;; 
+        match map.get Gm n with None => Success (map.put Gm n t) | Some _ => error:("key" n "already in" G) end
+    end.
 
-Opaque locals.
-Hint Rewrite (map.get_put_diff (map:=tenv)): core.
-Hint Rewrite (map.get_put_same (map:=tenv)): core.
-Hint Rewrite (map.get_empty (map:=tenv)): core.
+  Opaque locals.
+  Hint Rewrite (map.get_put_diff (map:=tenv)): core.
+  Hint Rewrite (map.get_put_same (map:=tenv)): core.
+  Hint Rewrite (map.get_empty (map:=tenv)): core.
 
-Compute fenv <- fiat_env_to_map [("a",TBool)] ;; synthesize_expr fenv _ (EAtom (ABool true)).
+  Compute fenv <- fiat_env_to_map [("a",TBool)] ;; synthesize_expr fenv _ (EAtom (ABool true)).
 
-(*wkn returns w and Gp', with w a substitution sending Gp to Gp'. essentially weakens n times *)
-Fixpoint get_ind_wkn (n: nat) (Gp: term): result (term * term) :=
+  (*wkn returns w and Gp', with w a substitution sending Gp to Gp'. essentially weakens n times *)
+  Fixpoint get_ind_wkn (n: nat) (Gp: term): result (term * term) :=
     match Gp with con "ext" [A;Gp'] =>
-  match n with
+    match n with
     | 0 => Success (con "wkn" [A;Gp'], Gp')
     | S n => 
         '(w, Gp'') <- get_ind_wkn n Gp' ;;
-         Success ((con "cmp" [w; con "wkn" [A;Gp']; Gp''; Gp'; Gp]), Gp'')
+        Success ((con "cmp" [w; con "wkn" [A;Gp']; Gp''; Gp'; Gp]), Gp'')
     end
     | _ => error:(Gp "not a nonempty env")
-end.
+    end.
 
-(* represents the kth term in Gp. *)
-Definition get_ind (n: nat) (Gp: term): result term :=
+  (* represents the kth term in Gp. *)
+  Definition get_ind (n: nat) (Gp: term): result term :=
     match n with
     | 0 => match Gp with 
-      | con "ext" [A;Gp'] => Success (con "hd" [A;Gp'])
-    | _ => error:(Gp "not a nonempty env")
-     end
+           | con "ext" [A;Gp'] => Success (con "hd" [A;Gp'])
+           | _ => error:(Gp "not a nonempty env")
+           end
     | S n => '(w, Gp') <- get_ind_wkn n Gp ;; 
-match Gp' with 
+        match Gp' with 
         | con "ext" [A';Gp''] => 
-         Success (con "val_subst" [con "hd" [A';Gp'']; A'; w; Gp'; Gp])
+            Success (con "val_subst" [con "hd" [A';Gp'']; A'; w; Gp'; Gp])
         | _ => error:(Gp' "not a nonempty env")
-  end 
-  end.
+        end 
+    end.
 
-Compute x.
-Compute get_ind 0 x.
-Print dlist.dlist.
-Print Result.
+  Compute x.
+  Compute get_ind 0 x.
+  Print dlist.dlist.
+  Print Result.
 
-Require Import FunInd.
+  Require Import FunInd.
 
-Definition make_list_ty (l: list term): result term :=
-      fold_right 
-      (fun x a' => a <- a' ;; 
-      Success (con "cons_list_ty" [a; x]))
-      (Success {{e#"empty_list_ty"}}) l.
+  Definition make_list_ty (l: list term): result term :=
+    fold_right 
+    (fun x a' => a <- a' ;; 
+    Success (con "cons_list_ty" [a; x]))
+    (Success {{e#"empty_list_ty"}}) l.
 
-Fixpoint ty_fiat_to_pyro (ft: type): result term :=
-  match ft with
-  | TBool => Success {{e#"bool"}}
-  | TList t => tl <- ty_fiat_to_pyro t ;; Success (con "list" [tl])
-  | TRecord l => l <- all_success (
-      map (fun x => ty <- ty_fiat_to_pyro (snd x) ;; Success (fst x, ty)) l) ;; 
-      lty <- make_list_ty (map snd (record_sort l)) ;; Success (con "Trecord" [lty])
-  | _ => error:("fiat type" ft "not supported")
-  end.
+  Fixpoint ty_fiat_to_pyro (ft: type): result term :=
+    match ft with
+    | TBool => Success {{e#"bool"}}
+    | TList t => tl <- ty_fiat_to_pyro t ;; Success (con "list" [tl])
+    | TRecord l => l <- all_success (
+        map (fun x => ty <- ty_fiat_to_pyro (snd x) ;; Success (fst x, ty)) l) ;; 
+        lty <- make_list_ty (map snd (record_sort l)) ;; Success (con "Trecord" [lty])
+    | _ => error:("fiat type" ft "not supported")
+    end.
 
-Definition ty_list_fiat_to_pyro (l: list (string * type)): result term :=
-      l <- all_success (
-      map (fun x => ty <- ty_fiat_to_pyro (snd x) ;; Success (fst x, ty)) l) ;;
-      make_list_ty (map snd (record_sort l)).
+  Definition ty_list_fiat_to_pyro (l: list (string * type)): result term :=
+    l <- all_success (
+    map (fun x => ty <- ty_fiat_to_pyro (snd x) ;; Success (fst x, ty)) l) ;;
+    make_list_ty (map snd (record_sort l)).
 
-Hint Unfold ty_fiat_to_pyro ty_list_fiat_to_pyro: core.
+  Hint Unfold ty_fiat_to_pyro ty_list_fiat_to_pyro: core.
 
-Fixpoint env_fiat_to_pyro (G: list (string * type)): result term :=
-  match G with
-  | [] => Success {{e#"emp"}}
-  | (_,x)::G' => 
-      A <- ty_fiat_to_pyro x ;;
-      Gp <- env_fiat_to_pyro G' ;;
-      Success (con "ext" [A;Gp])
-  end.
+  Fixpoint env_fiat_to_pyro (G: list (string * type)): result term :=
+    match G with
+    | [] => Success {{e#"emp"}}
+    | (_,x)::G' => 
+        A <- ty_fiat_to_pyro x ;;
+        Gp <- env_fiat_to_pyro G' ;;
+        Success (con "ext" [A;Gp])
+    end.
 
-Compute env_fiat_to_pyro [("a", TBool); ("b", TRecord([("a",TBool)]))].
+  Compute env_fiat_to_pyro [("a", TBool); ("b", TRecord([("a",TBool)]))].
 
-Definition get_fiat_type (e: expr) (Genv: list (string * type)) (Gstore: list (string * type)): result type :=
-  fenv <- fiat_env_to_map Genv ;;
-  fstore <- fiat_env_to_map Gstore ;;
-  '(t,_) <- synthesize_expr fstore fenv e ;; Success t.
+  Definition get_fiat_type (e: expr) (Genv: list (string * type)) (Gstore: list (string * type)): result type :=
+    fenv <- fiat_env_to_map Genv ;;
+    fstore <- fiat_env_to_map Gstore ;;
+    '(t,_) <- synthesize_expr fstore fenv e ;; Success t.
 
-Fixpoint expr_fiat_to_pyro (fe: expr) (Genv: list (string * type)) (Gstore: list (string * type)): result term :=
-  (*(G: tenv) (fe: expr) (ft: type) (fwt: type_of G G fe ft) := *)
-  Gp <- env_fiat_to_pyro Genv ;;
+  Fixpoint expr_fiat_to_pyro (fe: expr) (Genv: lenv) (Gstore: lenv): result term :=
+    (*(G: tenv) (fe: expr) (ft: type) (fwt: type_of G G fe ft) := *)
+    Gp <- env_fiat_to_pyro Genv ;;
   match fe with
   | EVar name => n <- lookup_ind name Genv ;; get_ind n Gp
   | EAtom fa => match fa with 
@@ -273,248 +271,227 @@ Fixpoint expr_fiat_to_pyro (fe: expr) (Genv: list (string * type)) (Gstore: list
       | _ => error:("table" fl "of type" ty_tb "not a list of records") end
   | _ => error:("term" fe "not defined")
   end.
-Hint Unfold expr_fiat_to_pyro: core.
+  Hint Unfold expr_fiat_to_pyro: core.
 
-Definition trx := expr_fiat_to_pyro (EAtom (ABool false)) [] [].
+  Definition trx := expr_fiat_to_pyro (EAtom (ABool false)) [] [].
 
-Compute trx.
+  Compute trx.
 
-(* do post-elab terms... i.e. outputs of trx_derived *)
+  (* do post-elab terms... i.e. outputs of trx_derived *)
 
-(* synthesize type in typesystem.v? *)
-Compute lang.
+  (* synthesize type in typesystem.v? *)
+  Compute lang.
 
-Derive te
-  SuchThat (elab_term (value_subst) [] {{e#"emp"}} te {{s#"env"}} )
-  As te_wf.
-Proof.  t''.  Qed.
-Print te. Print te_wf.
+  Derive te
+    SuchThat (elab_term (value_subst) [] {{e#"emp"}} te {{s#"env"}} )
+    As te_wf.
+  Proof.  t''.  Qed.
+  Print te. Print te_wf.
 
-Print wf_term.
+  Print wf_term.
 
-Goal wf_term (value_subst) [] {{e#"emp"}} {{s#"env"}}.
-Proof.  t''.  Qed.
+  Goal wf_term (value_subst) [] {{e#"emp"}} {{s#"env"}}.
+  Proof.  t''.  Qed.
 
-Derive trx_derived
-  SuchThat (elab_term fiat_rules [] {{e#"cons" #"false" (#"lempty" #"bool")}} trx_derived {{s#"val" #"emp" (#"list" #"bool")}} )
-  As trx_wf.
-Proof. t''. Qed.
-Print trx_derived.  Print trx_wf.
+  Derive trx_derived
+    SuchThat (elab_term fiat_rules [] {{e#"cons" #"false" (#"lempty" #"bool")}} trx_derived {{s#"val" #"emp" (#"list" #"bool")}} )
+    As trx_wf.
+  Proof. t''. Qed.
+  Print trx_derived.  Print trx_wf.
 
-Goal wf_term (fiat_rules) [] {{e#"true" #"emp"}} {{s#"val" #"emp" #"bool"}}.
-Proof.  t''.  Qed.
+  Goal wf_term (fiat_rules) [] {{e#"true" #"emp"}} {{s#"val" #"emp" #"bool"}}.
+  Proof.  t''.  Qed.
 
-Compute trx_derived.
+  Compute trx_derived.
 
-Definition trx' := match (
-  expr_fiat_to_pyro (
-  (*
-  ELet (EAtom (ABool false)) "x" (
+  Definition trx' := match (
+    expr_fiat_to_pyro (
+    (*
+       ELet (EAtom (ABool false)) "x" (
+       ELet (EAtom (ABool true)) "y" (
+       EBinop OAnd (EVar "x") (EVar "y")))
+     *)
+    ELet (EAtom (ABool false)) "x" (
     ELet (EAtom (ABool true)) "y" (
-      EBinop OAnd (EVar "x") (EVar "y")))
-   *)
-  ELet (EAtom (ABool false)) "x" (
-  ELet (EAtom (ABool true)) "y" (
-   EUnop ONot (EVar "y")))
-  ) [] [])
-  with Success x => x | _ => {{e#""}} end.
+    EUnop ONot (EVar "y")))
+    ) [] [])
+    with Success x => x | _ => {{e#""}} end.
 
-(*
-Compute trx'.
-Goal wf_term (fiat_rules) [] trx' {{s#"val" #"emp" #"bool"}}.
-Proof. t''. Qed.
+  (* do post-elab terms... i.e. outputs of trx_derived *)
 
-Compute hide_term_implicits (fiat_rules) trx'.
+  (* synthesize type in typesystem.v? *)
 
-Compute hide_term_implicits (fiat_rules)
-  (PositiveInstantiation.egraph_simpl' (fiat_rules) 20 20 60 [] trx').
- *)
+  (*Compute hide_term_implicits (fiat++value_subst)
+     (PositiveInstantiation.egraph_simpl' (fiat++value_subst) 5 5 5 [] trx_derived).*)
 
-(* do post-elab terms... i.e. outputs of trx_derived *)
-
-(* synthesize type in typesystem.v? *)
-Compute lang.
-
-(*Compute hide_term_implicits (fiat++value_subst)
-   (PositiveInstantiation.egraph_simpl' (fiat++value_subst) 5 5 5 [] trx_derived).*)
-
-Definition tr :=
-  match expr_fiat_to_pyro 
+  Definition tr :=
+    match expr_fiat_to_pyro 
     (ERecord [("a", EAtom (ABool true)); ("b", EAtom (ABool false))]) [] []
     with Success x => x | _ => {{e#""}} end.
-Compute tr.
-Goal wf_term (fiat_rules) [] tr {{s#"val" #"emp" (#"Trecord" (#"cons_list_ty" #"bool" (#"cons_list_ty" #"bool" #"empty_list_ty")))}}.
-Proof. t''. Qed.
-  
-    (*;;
-       Success (hide_term_implicits (fiat_rules) tr).*)
+  Compute tr.
+  Goal wf_term (fiat_rules) [] tr {{s#"val" #"emp" (#"Trecord" (#"cons_list_ty" #"bool" (#"cons_list_ty" #"bool" #"empty_list_ty")))}}.
+  Proof. t''. Qed.
 
-Compute ty_fiat_to_pyro (TRecord [("a", TBool); ("b", TBool)]).
-Compute expr_fiat_to_pyro (EAtom (ABool true)) nil.
-(* Success {{e#"true"}} *)
-Compute expr_fiat_to_pyro (EUnop ONot (EAtom (ABool true))) nil.
-(* Success {{e#"notb" #"true"}} *)
-Compute 
-tr <- expr_fiat_to_pyro (
-(EBinop OCons 
-    (ERecord [("a", EAtom (ABool true)); ("b", EAtom (ABool false))])
-    (EBinop OCons
-      (ERecord [("a", EAtom (ABool false)); ("b", EAtom (ABool false))])
-      (EAtom (ANil (Some (TRecord [("a", TBool); ("b", TBool)]))))
-    )
+  (*;;
+     Success (hide_term_implicits (fiat_rules) tr).*)
+
+  Compute ty_fiat_to_pyro (TRecord [("a", TBool); ("b", TBool)]).
+  Compute expr_fiat_to_pyro (EAtom (ABool true)) nil.
+  (* Success {{e#"true"}} *)
+  Compute expr_fiat_to_pyro (EUnop ONot (EAtom (ABool true))) nil.
+  (* Success {{e#"notb" #"true"}} *)
+  Compute 
+  tr <- expr_fiat_to_pyro (
+  (EBinop OCons 
+  (ERecord [("a", EAtom (ABool true)); ("b", EAtom (ABool false))])
+  (EBinop OCons
+  (ERecord [("a", EAtom (ABool false)); ("b", EAtom (ABool false))])
+  (EAtom (ANil (Some (TRecord [("a", TBool); ("b", TBool)]))))
   )
-) [] [] ;;
+  )
+  ) [] [] ;;
   Success (hide_term_implicits (fiat_rules) tr).
 
-Fixpoint name_nat (x: nat): string :=
-  match x with 0 => "" | S n => " " ++ name_nat n end.
+  Fixpoint name_nat (x: nat): string :=
+    match x with 0 => "" | S n => " " ++ name_nat n end.
 
-Definition name_list_ty {T} (l: list T): list (string * T) :=
-  (fix f (l: list T) (n: nat) := match l with
-                                 | [] => []
-                                 | x::l => ((name_nat n), x) :: (f l (S n))
-                                 end) l 0.
+  Definition name_list_ty {T} (l: list T): list (string * T) :=
+    (fix f (l: list T) (n: nat) := match l with
+                                   | [] => []
+                                   | x::l => ((name_nat n), x) :: (f l (S n))
+                                   end) l 0.
 
-Require Import Psatz.
+  Require Import Psatz.
 
-Lemma name_nat_leb: forall m n,
-  (n <= m -> is_true ((name_nat n) <=? (name_nat m))).
-Proof.
-  induction m; destruct n; intros; try lia; inj_all.
-  assert (n<=m) by lia;
-  specialize IHm with n; inj_all.
-Qed.
-Lemma name_nat_inj: forall n m,
-  name_nat n = name_nat m -> n = m.
-Proof.
-  induction n; destruct m; intros; try lia; inj_all.
-  inversion H; inj_all.
-Qed.
-Hint Resolve name_nat_inj name_nat_leb: core.
-Opaque name_nat.
+  Lemma name_nat_leb: forall m n,
+    (n <= m -> is_true ((name_nat n) <=? (name_nat m))).
+  Proof.
+    induction m; destruct n; intros; try lia; inj_all.
+    assert (n<=m) by lia;
+    specialize IHm with n; inj_all.
+  Qed.
+  Lemma name_nat_inj: forall n m,
+    name_nat n = name_nat m -> n = m.
+  Proof.
+    induction n; destruct m; intros; try lia; inj_all.
+    inversion H; inj_all.
+  Qed.
+  Hint Resolve name_nat_inj name_nat_leb: core.
+  Opaque name_nat.
 
-Lemma name_list_ty_ok: forall {A} l,
-  let fl := name_list_ty l in
-  StronglySorted (fun p p' : string * A => is_true (record_entry_leb p p')) fl /\
-  NoDup (map fst fl) /\
-  l = map snd fl.
-Proof.
-  intro A.
-  set (f := (fix f (l: list A) (n: nat) := match l with
-                                 | [] => []
-                                 | x::l => ((name_nat n), x) :: (f l (S n))
-                                 end)). 
-  enough (forall l n,
-  StronglySorted (fun p p' : string * A => is_true (record_entry_leb p p')) (f l n) /\
-  NoDup (map fst (f l n)) /\
-  (forall m a, n<m -> 
+  Lemma name_list_ty_ok: forall {A} l,
+    let fl := name_list_ty l in
+    StronglySorted (fun p p' : string * A => is_true (record_entry_leb p p')) fl /\
+    NoDup (map fst fl) /\
+    l = map snd fl.
+  Proof.
+    intro A.
+    set (f := (fix f (l: list A) (n: nat) := match l with
+                                             | [] => []
+                                             | x::l => ((name_nat n), x) :: (f l (S n))
+                                             end)
+    ). 
+    enough (forall l n,
+    StronglySorted (fun p p' : string * A => is_true (record_entry_leb p p')) (f l n) /\
+    NoDup (map fst (f l n)) /\
+    (forall m a, n<m -> 
     Forall (fun p' : string * A => is_true (record_entry_leb (name_nat n, a) p')) (f l m) /\
-  ~In (name_nat n) (map fst (f l m))) /\
-  l = map snd (f l n)) by (unfold name_list_ty in *; intros; specialize H with l 0; inj_all).
+    ~In (name_nat n) (map fst (f l m))) /\
+    l = map snd (f l n)) by (unfold name_list_ty in *; intros; specialize H with l 0; inj_all).
 
-  induction l; intros; intuition; invert_cons; equality; try constructor; 
-  inj_all.
-  all: try solve [specialize IHl with (S n); inj_all].
-  all: specialize IHl with n; inj_all.
-  all: try solve [specialize H1 with (S n) a; assert (n < S n) by lia; inj_all].
-  - apply name_nat_leb; lia.
-  - eapply H2; lia.
-  - destruct H0. 
-    + apply name_nat_inj in H0; lia.
-    + eapply H3; try apply H0; eauto.
-Qed.
+    induction l; intros; intuition; invert_cons; equality; try constructor; 
+    inj_all.
+    all: try solve [specialize IHl with (S n); inj_all].
+    all: specialize IHl with n; inj_all.
+    all: try solve [specialize H1 with (S n) a; assert (n < S n) by lia; inj_all].
+    - apply name_nat_leb; lia.
+    - eapply H2; lia.
+    - destruct H0. 
+      + apply name_nat_inj in H0; lia.
+      + eapply H3; try apply H0; eauto.
+  Qed.
 
-Opaque name_list_ty.
+  Opaque name_list_ty.
 
-Fixpoint list_ty_pyro_to_fiat (t: term): result (list type) :=
-  match t with
-  | {{e #"empty_list_ty" {A} {l} }} => Success []
-  | {{e #"cons_list_ty" {A} {l} }} => 
-                   ft <- ty_pyro_to_fiat A ;;
-                   l' <- list_ty_pyro_to_fiat l ;;
-                   Success (ft :: l') (* TODO this one does bad things? *)
-  | _ => error:("term" t "not a type")
-  end
-with ty_pyro_to_fiat (t: term): result type :=
-  match t with
-               | {{e #"bool"}} => Success TBool
-               | {{e #"Trecord" {lty} }} =>
-                   lty <- list_ty_pyro_to_fiat lty ;;
-                   Success (TRecord (name_list_ty lty))
-               | {{e #"list" {ty} }} => 
-                   ft <- ty_pyro_to_fiat ty ;;
-                   Success (TList ft)
-  | _ => error:("term" t "not a type")
-  end.
+  Fixpoint list_ty_pyro_to_fiat (t: term): result (list type) :=
+    match t with
+    | {{e #"empty_list_ty" {A} {l} }} => Success []
+    | {{e #"cons_list_ty" {A} {l} }} => 
+    ft <- ty_pyro_to_fiat A ;;
+    l' <- list_ty_pyro_to_fiat l ;;
+    Success (ft :: l')
+    | _ => error:("term" t "not a type")
+    end
+  with ty_pyro_to_fiat (t: term): result type :=
+    match t with
+    | {{e #"bool"}} => Success TBool
+    | {{e #"Trecord" {lty} }} =>
+    lty <- list_ty_pyro_to_fiat lty ;;
+    Success (TRecord (name_list_ty lty))
+    | {{e #"list" {ty} }} => 
+    ft <- ty_pyro_to_fiat ty ;;
+    Success (TList ft)
+    | _ => error:("term" t "not a type")
+    end.
 
-Definition lenv := (list (string * type)).
+  Fixpoint env_pyro_to_fiat (t: term): result lenv :=
+    match t with 
+    | {{e #"emp"}} => Success [] 
+    | {{e #"ext" {Gp} {A} }} =>
+      fe <- ty_pyro_to_fiat A ;;
+      G <- env_pyro_to_fiat Gp ;;
+      Success ((of_nat (length G), fe) :: G) 
+    | _ => error:("term" t "not an env") 
+    end.
 
-Fixpoint env_pyro_to_fiat (t: term): result lenv :=
-  match t with
-  | con s l => match s, l with
-               | "emp", [] => Success ([])
-               | "ext", [A;Gp] => 
-                   fe <- ty_pyro_to_fiat A ;;
-                   G <- env_pyro_to_fiat Gp ;;
-                   Success ((of_nat (length G), fe) :: G) 
-               | _, _ => error:("term" t "not an env")
-               end
-  | _ => error:("term" t "not an env") 
-  end.
+  Definition sub := (prod lenv lenv).
 
-Definition sub := (prod lenv lenv).
+  Fixpoint sub_pyro_to_fiat (t: term): result sub :=
+    match t with
+    | {{e #"wkn" {Gp} {A} }} =>
+      ft <- ty_pyro_to_fiat A ;;
+      Gp <- env_pyro_to_fiat Gp ;;
+      Success (Gp, ((of_nat (length Gp), ft) :: Gp)) 
+    | _ => error:("term" t "not a sub") 
+    end. (* TODO *)
 
-Fixpoint sub_pyro_to_fiat (t: term): result sub :=
-  match t with
-  | con s l => match s, l with
-               | "wkn", [A;Gp] =>
-                   ft <- ty_pyro_to_fiat A ;;
-                   Gp <- env_pyro_to_fiat Gp ;;
-                   Success (Gp, ((of_nat (length Gp), ft) :: Gp)) 
-               | _, _ => error:("term" t "not a sub") 
-               end
-  | _ => error:("term" t "not a sub") 
-  end. (* TODO *)
+  Fixpoint expr_pyro_to_fiat (t: term): result expr := (* * list (string * type)) := *)
+    match t with
+    | {{e #"true" {Gp} }} => Success (EAtom (ABool true))
+    | {{e #"false" {Gp} }} => Success (EAtom (ABool false))
+    | {{e #"notb" {Gp} {e} }} => 
+    fe <- expr_pyro_to_fiat e ;; 
+    Success (EUnop ONot fe)
+    | {{e #"andb" {Gp} {e1} {e2} }} => 
+    fe1 <- expr_pyro_to_fiat e1 ;; 
+    fe2 <- expr_pyro_to_fiat e2 ;; 
+    Success (EBinop OAnd fe1 fe2)
+    | {{e #"orb" {Gp} {e1} {e2} }} => 
+    fe1 <- expr_pyro_to_fiat e1 ;; 
+    fe2 <- expr_pyro_to_fiat e2 ;; 
+    Success (EBinop OOr fe1 fe2)
+    | {{e #"cons" {Gp} {A} {e1} {e2} }} => 
+    fe1 <- expr_pyro_to_fiat e1 ;; 
+    fe2 <- expr_pyro_to_fiat e2 ;; 
+    Success (EBinop OCons fe1 fe2)
+    | {{e #"if" {Gp} {cond} {A} {e1} {e2} }} => 
+    fcond <- expr_pyro_to_fiat cond ;; 
+    fe1 <- expr_pyro_to_fiat e1 ;; 
+    fe2 <- expr_pyro_to_fiat e2 ;; 
+    Success (EIf fcond fe1 fe2)
+    | {{e #"lempty" {Gp} {A} }} => 
+    ft <- ty_pyro_to_fiat A ;;
+    Success (EAtom (ANil (Some ft)))
+    | _ => error:("term" t "not an expr")
+    end.
 
-Fixpoint expr_pyro_to_fiat (t: term): result expr := (* * list (string * type)) := *)
-  match t with
-  | con s l => match s, l with
-               | "true", [Gp] => Success (EAtom (ABool true))
-               | "false", [Gp] => Success (EAtom (ABool false))
-               | "notb", [e;Gp] => 
-                   fe <- expr_pyro_to_fiat e ;; 
-                   Success (EUnop ONot fe)
-               | "andb", [e2;e1;Gp] => 
-                   fe1 <- expr_pyro_to_fiat e1 ;; 
-                   fe2 <- expr_pyro_to_fiat e2 ;; 
-                   Success (EBinop OAnd fe1 fe2)
-               | "orb", [e2;e1;Gp] => 
-                   fe1 <- expr_pyro_to_fiat e1 ;; 
-                   fe2 <- expr_pyro_to_fiat e2 ;; 
-                   Success (EBinop OOr fe1 fe2)
-               | "cons", [e2;e1;A;Gp] => 
-                   fe1 <- expr_pyro_to_fiat e1 ;; 
-                   fe2 <- expr_pyro_to_fiat e2 ;; 
-                   Success (EBinop OCons fe1 fe2)
-               | "if", [e2;e1;A;cond;Gp] => 
-                   fcond <- expr_pyro_to_fiat cond ;; 
-                   fe1 <- expr_pyro_to_fiat e1 ;; 
-                   fe2 <- expr_pyro_to_fiat e2 ;; 
-                   Success (EIf fcond fe1 fe2)
-               | "lempty", [A;Gp] =>
-                   ft <- ty_pyro_to_fiat A ;;
-                   Success (EAtom (ANil (Some ft)))
-               | _, _ => error:("term" t "not an expr")
-               end
-  | _ => error:("term" t "not an expr")
-  end.
+  (*Definition tx := EIf (EAtom (ABool true)) (EAtom (ABool true)) (EAtom (ABool false)).*)
+  Definition tx := EBinop OOr (EAtom (ABool false)) (EAtom (ABool false)).
+  Definition pytx := match (expr_fiat_to_pyro tx [] []) with Success p => p | Failure _ => var "" end.
 
-(*Definition tx := EIf (EAtom (ABool true)) (EAtom (ABool true)) (EAtom (ABool false)).*)
-Definition tx := EBinop OOr (EAtom (ABool false)) (EAtom (ABool false)).
-Definition pytx := match (expr_fiat_to_pyro tx [] []) with Success p => p | Failure _ => var "" end.
+  Compute tx.
+  Compute pytx.
+  Compute expr_pyro_to_fiat pytx.
+  Goal (Success tx) = (expr_pyro_to_fiat pytx). Proof. auto. Qed.
 
-Compute tx.
-Compute pytx.
-Compute expr_pyro_to_fiat pytx.
-Goal (Success tx) = (expr_pyro_to_fiat pytx). Proof. auto. Qed.
 End WithMap.
